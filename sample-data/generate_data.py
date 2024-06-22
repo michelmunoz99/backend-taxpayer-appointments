@@ -1,36 +1,49 @@
-###########################################################
-#                                                         #
-#   Sample data generation script                        #
-#   Usage:                                                #
-#     1. Install Faker library: pip3 install Faker        #
-#     2. Run the script: python3 generate_data.py         #
-#                                                         #
-###########################################################
-
-from faker import Faker
 import json
+from geopy.distance import geodesic
+from heapq import nlargest
+import random
 
-fake = Faker()
-Faker.seed(0)
+with open('taxpayers.json', 'r') as file:
+    taxpayers = json.load(file)
 
-taxpayers = []
+input_location = (19.3797208, -99.1940332)
 
-for _ in range(1000):
-    geolocation = fake.local_latlng(country_code="MX")
-    taxpayer = {
-        "id": fake.uuid4(),
-        "name": fake.name(),
-        "location": {
-          "latitude":float(geolocation[0]),
-          "longitude":float(geolocation[1])
-        },
-        "age" : fake.random_int(18, 90),
-        "accepted_offers" : fake.random_int(0, 100),
-        "canceled_offers" : fake.random_int(0, 100),
-        "average_reply_time" : fake.random_int(1, 3600),
-    }
-    taxpayers.append(taxpayer)
+def calculate_score(taxpayer, input_location):
+    age = taxpayer['age']
+    accepted_offers = taxpayer['accepted_offers']
+    canceled_offers = taxpayer['canceled_offers']
+    average_reply_time = taxpayer['average_reply_time']
+    client_location = (taxpayer['location']['latitude'], taxpayer['location']['longitude'])
 
-# Writing to taxpayers.json
-with open("taxpayers.json", "w") as outfile:
-    outfile.write(json.dumps(taxpayers))
+    distance = geodesic(input_location, client_location).kilometers
+
+    age_score = (age / 100) * 10
+    distance_score = (1 / (1 + distance)) * 10
+    accepted_score = (accepted_offers / 100) * 10
+    canceled_score = ((100 - canceled_offers) / 100) * 10
+    reply_time_score = ((3600 - average_reply_time) / 3600) * 10
+
+    score = (age_score * 0.1 + 
+             distance_score * 0.1 + 
+             accepted_score * 0.3 + 
+             canceled_score * 0.3 + 
+             reply_time_score * 0.2)
+
+    return min(max(score, 1), 10)
+
+for taxpayer in taxpayers:
+    taxpayer['score'] = calculate_score(taxpayer, input_location)
+
+few_data_taxpayers = [taxpayer for taxpayer in taxpayers if 0 <= taxpayer['accepted_offers'] <= 10 and 0 <= taxpayer['canceled_offers'] <= 10]
+
+random_selected_taxpayers = random.sample(few_data_taxpayers, min(len(few_data_taxpayers), 3))
+
+remaining_taxpayers = [taxpayer for taxpayer in taxpayers if taxpayer not in random_selected_taxpayers]
+top_taxpayers = nlargest(7, remaining_taxpayers, key=lambda x: x['score'])
+
+final_top_taxpayers = top_taxpayers + random_selected_taxpayers
+
+print(json.dumps(final_top_taxpayers, indent=4))
+
+with open('top_taxpayers.json', 'w') as outfile:
+    json.dump(final_top_taxpayers, outfile, indent=4)
